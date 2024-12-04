@@ -9,6 +9,10 @@ from fastapi.websockets import WebSocketDisconnect
 from twilio.twiml.voice_response import VoiceResponse, Connect, Say, Stream
 from dotenv import load_dotenv
 
+# Add these imports to your main.py
+import uuid
+from browser_handlers import browser_manager
+
 load_dotenv()
 
 # Configuration
@@ -37,6 +41,28 @@ if not OPENAI_API_KEY:
 @app.get("/", response_class=JSONResponse)
 async def index_page():
     return {"message": "Twilio Media Stream Server is running!"}
+
+# Add this new endpoint after your existing endpoints
+@app.websocket("/browser-stream")
+async def handle_browser_stream(websocket: WebSocket):
+    """Handle WebSocket connections from browsers."""
+    client_id = str(uuid.uuid4())
+    
+    try:
+        await browser_manager.connect(websocket, client_id)
+        await browser_manager.initialize_openai_connection(client_id)
+        
+        # Handle browser audio and OpenAI messages concurrently
+        await asyncio.gather(
+            browser_manager.handle_browser_audio(websocket, client_id),
+            browser_manager.handle_openai_messages(client_id)
+        )
+    
+    except WebSocketDisconnect:
+        await browser_manager.disconnect(client_id)
+    except Exception as e:
+        print(f"Error in browser stream handler: {e}")
+        await browser_manager.disconnect(client_id)
 
 @app.api_route("/incoming-call", methods=["GET", "POST"])
 async def handle_incoming_call(request: Request):
