@@ -39,7 +39,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://voice.abay.tech"],
+    allow_origins=["*"],  # More permissive for testing
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -51,6 +51,10 @@ if not OPENAI_API_KEY:
 @app.get("/", response_class=JSONResponse)
 async def index_page():
     return {"message": "Twilio Media Stream Server is running!"}
+
+@app.get("/test-browser-endpoint")
+async def test_endpoint():
+    return {"status": "ok"}
 
 # Add this new endpoint after your existing endpoints
 @app.websocket("/browser-stream")
