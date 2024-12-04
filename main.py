@@ -9,6 +9,8 @@ from fastapi.websockets import WebSocketDisconnect
 from twilio.twiml.voice_response import VoiceResponse, Connect, Say, Stream
 from dotenv import load_dotenv
 
+from fastapi.middleware.cors import CORSMiddleware
+
 # Add these imports to your main.py
 import uuid
 from browser_handlers import browser_manager
@@ -34,6 +36,14 @@ LOG_EVENT_TYPES = [
 SHOW_TIMING_MATH = False
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://voice.abay.tech"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 if not OPENAI_API_KEY:
     raise ValueError('Missing the OpenAI API key. Please set it in the .env file.')
