@@ -56,7 +56,18 @@ async def index_page():
 async def test_endpoint():
     return {"status": "ok"}
 
-@app.websocket("/browser-stream")
+def verify_audio_format(audio_payload):
+    try:
+        decoded = base64.b64decode(audio_payload)
+        print(f"Audio chunk size: {len(decoded)} bytes")
+        # Add basic format checking
+        if len(decoded) < 10:
+            print("Warning: Audio chunk too small")
+        return True
+    except Exception as e:
+        print(f"Audio format error: {e}")
+        return False
+
 @app.websocket("/browser-stream")
 async def handle_browser_stream(websocket: WebSocket):
     """Handle WebSocket connections from browsers."""
@@ -80,40 +91,45 @@ async def handle_browser_stream(websocket: WebSocket):
             try:
                 async for message in websocket.iter_text():
                     data = json.loads(message)
-                    print(f"Received browser message: {message[:100]}...")
-                    
-                    if data['event'] == 'start':
-                        stream_sid = data['start']['streamSid']
-                    elif data['event'] == 'media' and openai_ws.open:
-                        # Send audio to OpenAI
-                        audio_append = {
-                            "type": "input_audio_buffer.append",
-                            "audio": data['media']['payload']
-                        }
-                        await openai_ws.send(json.dumps(audio_append))
-                        print("Sent audio to OpenAI")
-            except WebSocketDisconnect:
-                print("Browser client disconnected")
+                    if data['event'] == 'media':
+                        if verify_audio_format(data['media']['payload']):
+                            audio_append = {
+                                "type": "input_audio_buffer.append",
+                                "audio": data['media']['payload']
+                            }
+                            await openai_ws.send(json.dumps(audio_append))
+                            print("Sent audio to OpenAI")
+                        else:
+                            print("Skipping invalid audio chunk")
+            except Exception as e:
+                print(f"Error in receive_from_browser: {e}")
                 
         async def send_to_browser():
             try:
+                print("Starting to listen for OpenAI responses...")
                 async for openai_message in openai_ws:
+                    print(f"Raw OpenAI message received: {openai_message}")
                     response = json.loads(openai_message)
-                    print(f"Received OpenAI message: {openai_message[:100]}...")
                     
-                    # Forward text and audio responses to browser
                     if response.get('type') == 'response.text.delta':
+                        print(f"Sending text to browser: {response.get('delta', '')}")
                         await websocket.send_json({
                             'type': 'text',
                             'content': response.get('delta', '')
                         })
                     elif response.get('type') == 'response.audio.delta':
+                        print("Sending audio delta to browser")
                         await websocket.send_json({
                             'type': 'audio',
                             'content': response.get('delta', '')
                         })
+                    elif response.get('type') == 'error':
+                        print(f"OpenAI Error: {response}")
+                    else:
+                        print(f"Other OpenAI event: {response.get('type')}")
             except Exception as e:
                 print(f"Error in send_to_browser: {e}")
+                print(f"Full error details: {str(e)}")
 
         await asyncio.gather(receive_from_browser(), send_to_browser())
 
@@ -298,8 +314,23 @@ async def initialize_session(openai_ws):
     print('Sending session update:', json.dumps(session_update))
     await openai_ws.send(json.dumps(session_update))
 
-    # Uncomment the next line to have the AI speak first
-    # await send_initial_conversation_item(openai_ws)
+    # Send an initial prompt to test the connection
+    print("Sending initial test prompt...")
+    initial_conversation_item = {
+        "type": "conversation.item.create",
+        "item": {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "Say hello and introduce yourself briefly."
+                }
+            ]
+        }
+    }
+    await openai_ws.send(json.dumps(initial_conversation_item))
+    await openai_ws.send(json.dumps({"type": "response.create"}))
 
 if __name__ == "__main__":
     import uvicorn
