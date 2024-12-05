@@ -120,11 +120,11 @@ async def handle_browser_stream(websocket: WebSocket):
         if websocket.client_state.CONNECTED:
             await websocket.close()
 
-# Test script endpoint that generates sample audio
-@app.websocket("/test-audio")
-async def test_audio_stream():
-    """Generate and stream test audio data."""
-    print("\n[Test] 🎮 Starting test audio stream")
+
+@app.get("/test-audio-data")  # Changed from WebSocket to HTTP GET
+async def get_test_audio():
+    """Generate test audio data and return as JSON."""
+    print("\n[Test] 🎮 Generating test audio data")
     
     # Generate 1 second of 440Hz sine wave at 16kHz
     sample_rate = 16000
@@ -139,13 +139,10 @@ async def test_audio_stream():
     
     print(f"[Test] 🎵 Generated {len(audio_bytes)} bytes of test audio")
     
-    # Create test message
-    test_message = {
+    return {
         "type": "audio",
         "audio": audio_base64
     }
-    
-    return test_message
 
 # Test endpoint to verify server is running and configured
 @app.get("/test-browser-stream")

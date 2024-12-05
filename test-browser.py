@@ -6,8 +6,13 @@ import requests
 async def test_audio_stream():
     print("🧪 Starting WebSocket test")
     
-    # First get the test audio data
-    test_data = requests.get("http://localhost/test-audio").json()
+    # Get test audio data from HTTP endpoint
+    response = requests.get("http://localhost/test-audio-data")
+    if response.status_code != 200:
+        print(f"❌ Failed to get test audio data: {response.status_code}")
+        return
+        
+    test_data = response.json()
     print(f"📦 Got test audio data: {len(test_data['audio'])} bytes")
     
     # Connect to browser stream
