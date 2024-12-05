@@ -37,28 +37,28 @@ if not OPENAI_API_KEY:
 
 async def initialize_browser_session(openai_ws):
     """Initialize OpenAI session specifically for browser PCM16 audio."""
-    print("[Browser] Initializing session with PCM16 format")
+    print("\n[Browser] 🚀 Initializing new session")
     session_update = {
         "type": "session.update",
         "session": {
             "turn_detection": {"type": "server_vad"},
-            "input_audio_format": "pcm16",  # Match browser's native format
-            "output_audio_format": "pcm16",  # Match browser's native format
+            "input_audio_format": "pcm16",
+            "output_audio_format": "pcm16",
             "voice": "alloy",
             "instructions": SYSTEM_MESSAGE,
             "modalities": ["text", "audio"],
             "temperature": 0.8,
         }
     }
-    print(f"[Browser] Sending session update: {json.dumps(session_update)}")
+    print(f"[Browser] 📤 Sending session config:\n{json.dumps(session_update, indent=2)}")
     await openai_ws.send(json.dumps(session_update))
 
 @app.websocket("/browser-stream")
 async def handle_browser_stream(websocket: WebSocket):
     """Handle WebSocket connections directly from browser."""
-    print("[Browser] New connection request")
+    print("\n[Browser] 🔌 New connection request")
     await websocket.accept()
-    print("[Browser] Connection accepted")
+    print("[Browser] ✅ Connection accepted")
 
     try:
         async with websockets.connect(
@@ -68,50 +68,84 @@ async def handle_browser_stream(websocket: WebSocket):
                 "OpenAI-Beta": "realtime=v1"
             }
         ) as openai_ws:
-            print("[Browser] Connected to OpenAI")
+            print("[Browser] 🤖 Connected to OpenAI")
             await initialize_browser_session(openai_ws)
 
             async def receive_from_browser():
                 try:
                     async for message in websocket.iter_text():
                         data = json.loads(message)
-                        print(f"[Browser] Received data type: {data.get('type')}")
+                        print(f"\n[Browser] 📥 Received data type: {data.get('type')}")
                         
                         if data['type'] == 'audio':
+                            audio_bytes = base64.b64decode(data['audio'])
+                            print(f"[Browser] 🎤 Audio data size: {len(audio_bytes)} bytes")
+                            
                             audio_data = {
                                 "type": "input_audio_buffer.append",
                                 "audio": data['audio']
                             }
                             await openai_ws.send(json.dumps(audio_data))
-                except websockets.exceptions.ConnectionClosed:
-                    print("[Browser] Browser connection closed")
+                            print("[Browser] 📤 Forwarded audio to OpenAI")
                 except Exception as e:
-                    print(f"[Browser] Error in receive_from_browser: {str(e)}")
+                    print(f"[Browser] ❌ Error in receive_from_browser: {str(e)}")
 
             async def send_to_browser():
                 try:
                     async for message in openai_ws:
                         response = json.loads(message)
-                        print(f"[Browser] OpenAI event: {response.get('type')}")
+                        event_type = response.get('type', 'unknown')
+                        print(f"\n[Browser] 📥 OpenAI event: {event_type}")
 
-                        if response.get('type') == 'response.audio.delta':
+                        if event_type == 'response.audio.delta':
+                            audio_bytes = base64.b64decode(response['delta'])
+                            print(f"[Browser] 🔊 Response audio size: {len(audio_bytes)} bytes")
+                            
                             await websocket.send_json({
                                 'type': 'audio',
                                 'audio': response['delta']
                             })
-                except websockets.exceptions.ConnectionClosed:
-                    print("[Browser] OpenAI connection closed")
+                            print("[Browser] 📤 Sent audio to browser")
+                        elif event_type == 'session.created':
+                            print(f"[Browser] 📋 Session details:\n{json.dumps(response, indent=2)}")
                 except Exception as e:
-                    print(f"[Browser] Error in send_to_browser: {str(e)}")
+                    print(f"[Browser] ❌ Error in send_to_browser: {str(e)}")
 
             await asyncio.gather(receive_from_browser(), send_to_browser())
     
     except Exception as e:
-        print(f"[Browser] Fatal error: {str(e)}")
+        print(f"[Browser] 💥 Fatal error: {str(e)}")
     finally:
-        print("[Browser] Connection cleanup")
+        print("[Browser] 🧹 Connection cleanup")
         if websocket.client_state.CONNECTED:
             await websocket.close()
+
+# Test script endpoint that generates sample audio
+@app.websocket("/test-audio")
+async def test_audio_stream():
+    """Generate and stream test audio data."""
+    print("\n[Test] 🎮 Starting test audio stream")
+    
+    # Generate 1 second of 440Hz sine wave at 16kHz
+    sample_rate = 16000
+    duration = 1.0
+    t = np.linspace(0, duration, int(sample_rate * duration))
+    audio = np.sin(2 * np.pi * 440 * t)
+    
+    # Convert to 16-bit PCM
+    audio_int16 = (audio * 32767).astype(np.int16)
+    audio_bytes = audio_int16.tobytes()
+    audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+    
+    print(f"[Test] 🎵 Generated {len(audio_bytes)} bytes of test audio")
+    
+    # Create test message
+    test_message = {
+        "type": "audio",
+        "audio": audio_base64
+    }
+    
+    return test_message
 
 # Test endpoint to verify server is running and configured
 @app.get("/test-browser-stream")
