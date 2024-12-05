@@ -59,24 +59,68 @@ async def test_endpoint():
 @app.websocket("/browser-stream")
 async def handle_browser_stream(websocket: WebSocket):
     """Handle WebSocket connections from browsers."""
+    print("Browser client connected")  # Debug log
     client_id = str(uuid.uuid4())
-    
+
     try:
-        await websocket.accept()  # Add this line first
-        await browser_manager.connect(websocket, client_id)
-        await browser_manager.initialize_openai_connection(client_id)
+        await websocket.accept()
+        print(f"Client {client_id} accepted")  # Debug log
         
-        # Handle browser audio and OpenAI messages concurrently
-        await asyncio.gather(
-            browser_manager.handle_browser_audio(websocket, client_id),
-            browser_manager.handle_openai_messages(client_id)
-        )
-    
+        async with websockets.connect(
+            'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01',
+            extra_headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "OpenAI-Beta": "realtime=v1"
+            }
+        ) as openai_ws:
+            print("Connected to OpenAI")  # Debug log
+            await initialize_session(openai_ws)
+            
+            async def receive_from_browser():
+                try:
+                    async for message in websocket.iter_text():
+                        print(f"Received browser message: {message[:100]}...")  # Debug log
+                        data = json.loads(message)
+                        if data['event'] == 'media' and openai_ws.open:
+                            audio_append = {
+                                "type": "input_audio_buffer.append",
+                                "audio": data['media']['payload']
+                            }
+                            await openai_ws.send(json.dumps(audio_append))
+                            print("Sent audio to OpenAI")  # Debug log
+                except WebSocketDisconnect:
+                    print(f"Browser client {client_id} disconnected")
+                except Exception as e:
+                    print(f"Error in receive_from_browser: {e}")
+
+            async def send_to_browser():
+                try:
+                    async for openai_message in openai_ws:
+                        print(f"Received OpenAI message: {openai_message[:100]}...")  # Debug log
+                        response = json.loads(openai_message)
+                        
+                        if response.get('type') == 'response.audio.delta' and 'delta' in response:
+                            await websocket.send_json({
+                                "type": "response.audio.delta",
+                                "delta": response['delta']
+                            })
+                            print("Sent audio response to browser")  # Debug log
+                        
+                        elif response.get('type') == 'response.text.delta' and 'delta' in response:
+                            await websocket.send_json({
+                                "type": "response.text.delta",
+                                "delta": response['delta']
+                            })
+                            print("Sent text response to browser")  # Debug log
+                except Exception as e:
+                    print(f"Error in send_to_browser: {e}")
+
+            await asyncio.gather(receive_from_browser(), send_to_browser())
+            
     except WebSocketDisconnect:
-        await browser_manager.disconnect(client_id)
+        print(f"Browser client {client_id} disconnected")
     except Exception as e:
         print(f"Error in browser stream handler: {e}")
-        await browser_manager.disconnect(client_id)
 
 @app.api_route("/incoming-call", methods=["GET", "POST"])
 async def handle_incoming_call(request: Request):
