@@ -56,13 +56,13 @@ async def index_page():
 async def test_endpoint():
     return {"status": "ok"}
 
-# Add this new endpoint after your existing endpoints
 @app.websocket("/browser-stream")
 async def handle_browser_stream(websocket: WebSocket):
     """Handle WebSocket connections from browsers."""
     client_id = str(uuid.uuid4())
     
     try:
+        await websocket.accept()  # Add this line first
         await browser_manager.connect(websocket, client_id)
         await browser_manager.initialize_openai_connection(client_id)
         
