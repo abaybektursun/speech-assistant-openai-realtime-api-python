@@ -9,12 +9,6 @@ from fastapi.websockets import WebSocketDisconnect
 from twilio.twiml.voice_response import VoiceResponse, Connect, Say, Stream
 from dotenv import load_dotenv
 
-from fastapi.middleware.cors import CORSMiddleware
-
-# Add these imports to your main.py
-import uuid
-from browser_handlers import browser_manager
-
 load_dotenv()
 
 # Configuration
@@ -37,101 +31,12 @@ SHOW_TIMING_MATH = False
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # More permissive for testing
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 if not OPENAI_API_KEY:
     raise ValueError('Missing the OpenAI API key. Please set it in the .env file.')
 
 @app.get("/", response_class=JSONResponse)
 async def index_page():
     return {"message": "Twilio Media Stream Server is running!"}
-
-@app.get("/test-browser-endpoint")
-async def test_endpoint():
-    return {"status": "ok"}
-
-def verify_audio_format(audio_payload):
-    try:
-        decoded = base64.b64decode(audio_payload)
-        print(f"Audio chunk size: {len(decoded)} bytes")
-        # Add basic format checking
-        if len(decoded) < 10:
-            print("Warning: Audio chunk too small")
-        return True
-    except Exception as e:
-        print(f"Audio format error: {e}")
-        return False
-
-@app.websocket("/browser-stream")
-async def handle_browser_stream(websocket: WebSocket):
-    """Handle WebSocket connections from browsers."""
-    print("Browser client connected")
-    await websocket.accept()
-    
-    async with websockets.connect(
-        'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01',
-        extra_headers={
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "OpenAI-Beta": "realtime=v1"
-        }
-    ) as openai_ws:
-        print("Connected to OpenAI")
-        await initialize_session(openai_ws)
-        
-        # Connection specific state
-        stream_sid = None
-        
-        async def receive_from_browser():
-            try:
-                async for message in websocket.iter_text():
-                    data = json.loads(message)
-                    if data['event'] == 'media':
-                        if verify_audio_format(data['media']['payload']):
-                            audio_append = {
-                                "type": "input_audio_buffer.append",
-                                "audio": data['media']['payload']
-                            }
-                            await openai_ws.send(json.dumps(audio_append))
-                            print("Sent audio to OpenAI")
-                        else:
-                            print("Skipping invalid audio chunk")
-            except Exception as e:
-                print(f"Error in receive_from_browser: {e}")
-                
-        async def send_to_browser():
-            try:
-                print("Starting to listen for OpenAI responses...")
-                async for openai_message in openai_ws:
-                    print(f"Raw OpenAI message received: {openai_message}")
-                    response = json.loads(openai_message)
-                    
-                    if response.get('type') == 'response.text.delta':
-                        print(f"Sending text to browser: {response.get('delta', '')}")
-                        await websocket.send_json({
-                            'type': 'text',
-                            'content': response.get('delta', '')
-                        })
-                    elif response.get('type') == 'response.audio.delta':
-                        print("Sending audio delta to browser")
-                        await websocket.send_json({
-                            'type': 'audio',
-                            'content': response.get('delta', '')
-                        })
-                    elif response.get('type') == 'error':
-                        print(f"OpenAI Error: {response}")
-                    else:
-                        print(f"Other OpenAI event: {response.get('type')}")
-            except Exception as e:
-                print(f"Error in send_to_browser: {e}")
-                print(f"Full error details: {str(e)}")
-
-        await asyncio.gather(receive_from_browser(), send_to_browser())
 
 @app.api_route("/incoming-call", methods=["GET", "POST"])
 async def handle_incoming_call(request: Request):
@@ -314,23 +219,8 @@ async def initialize_session(openai_ws):
     print('Sending session update:', json.dumps(session_update))
     await openai_ws.send(json.dumps(session_update))
 
-    # Send an initial prompt to test the connection
-    print("Sending initial test prompt...")
-    initial_conversation_item = {
-        "type": "conversation.item.create",
-        "item": {
-            "type": "message",
-            "role": "user",
-            "content": [
-                {
-                    "type": "input_text",
-                    "text": "Say hello and introduce yourself briefly."
-                }
-            ]
-        }
-    }
-    await openai_ws.send(json.dumps(initial_conversation_item))
-    await openai_ws.send(json.dumps({"type": "response.create"}))
+    # Uncomment the next line to have the AI speak first
+    await send_initial_conversation_item(openai_ws)
 
 if __name__ == "__main__":
     import uvicorn
