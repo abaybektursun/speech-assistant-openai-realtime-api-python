@@ -34,6 +34,98 @@ app = FastAPI()
 if not OPENAI_API_KEY:
     raise ValueError('Missing the OpenAI API key. Please set it in the .env file.')
 
+
+async def initialize_browser_session(openai_ws):
+    """Initialize OpenAI session specifically for browser PCM16 audio."""
+    print("[Browser] Initializing session with PCM16 format")
+    session_update = {
+        "type": "session.update",
+        "session": {
+            "turn_detection": {"type": "server_vad"},
+            "input_audio_format": "pcm16",  # Match browser's native format
+            "output_audio_format": "pcm16",  # Match browser's native format
+            "voice": "alloy",
+            "instructions": SYSTEM_MESSAGE,
+            "modalities": ["text", "audio"],
+            "temperature": 0.8,
+        }
+    }
+    print(f"[Browser] Sending session update: {json.dumps(session_update)}")
+    await openai_ws.send(json.dumps(session_update))
+
+@app.websocket("/browser-stream")
+async def handle_browser_stream(websocket: WebSocket):
+    """Handle WebSocket connections directly from browser."""
+    print("[Browser] New connection request")
+    await websocket.accept()
+    print("[Browser] Connection accepted")
+
+    try:
+        async with websockets.connect(
+            'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01',
+            extra_headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "OpenAI-Beta": "realtime=v1"
+            }
+        ) as openai_ws:
+            print("[Browser] Connected to OpenAI")
+            await initialize_browser_session(openai_ws)
+
+            async def receive_from_browser():
+                try:
+                    async for message in websocket.iter_text():
+                        data = json.loads(message)
+                        print(f"[Browser] Received data type: {data.get('type')}")
+                        
+                        if data['type'] == 'audio':
+                            audio_data = {
+                                "type": "input_audio_buffer.append",
+                                "audio": data['audio']
+                            }
+                            await openai_ws.send(json.dumps(audio_data))
+                except websockets.exceptions.ConnectionClosed:
+                    print("[Browser] Browser connection closed")
+                except Exception as e:
+                    print(f"[Browser] Error in receive_from_browser: {str(e)}")
+
+            async def send_to_browser():
+                try:
+                    async for message in openai_ws:
+                        response = json.loads(message)
+                        print(f"[Browser] OpenAI event: {response.get('type')}")
+
+                        if response.get('type') == 'response.audio.delta':
+                            await websocket.send_json({
+                                'type': 'audio',
+                                'audio': response['delta']
+                            })
+                except websockets.exceptions.ConnectionClosed:
+                    print("[Browser] OpenAI connection closed")
+                except Exception as e:
+                    print(f"[Browser] Error in send_to_browser: {str(e)}")
+
+            await asyncio.gather(receive_from_browser(), send_to_browser())
+    
+    except Exception as e:
+        print(f"[Browser] Fatal error: {str(e)}")
+    finally:
+        print("[Browser] Connection cleanup")
+        if websocket.client_state.CONNECTED:
+            await websocket.close()
+
+# Test endpoint to verify server is running and configured
+@app.get("/test-browser-stream")
+async def test_browser_stream():
+    """Test endpoint to verify configuration."""
+    return {
+        "status": "ok",
+        "openai_key_configured": bool(OPENAI_API_KEY),
+        "endpoints": {
+            "browser_websocket": "/browser-stream",
+            "twilio_websocket": "/media-stream"
+        }
+    }
+
 @app.get("/", response_class=JSONResponse)
 async def index_page():
     return {"message": "Twilio Media Stream Server is running!"}
