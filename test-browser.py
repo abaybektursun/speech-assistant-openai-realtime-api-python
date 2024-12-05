@@ -1,28 +1,31 @@
 import asyncio
 import websockets
 import json
+import requests
 
-async def test_browser_stream():
-    """Test the browser stream WebSocket endpoint."""
-    uri = "ws://localhost:8000/browser-stream"
-    async with websockets.connect(uri) as websocket:
-        # Send a test audio chunk
-        test_data = {
-            "event": "media",
-            "media": {
-                "payload": "AAAA"  # Minimal PCM16 test data
-            }
-        }
-        await websocket.send(json.dumps(test_data))
+async def test_audio_stream():
+    print("🧪 Starting WebSocket test")
+    
+    # First get the test audio data
+    test_data = requests.get("http://localhost/test-audio").json()
+    print(f"📦 Got test audio data: {len(test_data['audio'])} bytes")
+    
+    # Connect to browser stream
+    async with websockets.connect('ws://localhost/browser-stream') as ws:
+        print("🔌 Connected to WebSocket")
+        
+        # Send test audio
+        await ws.send(json.dumps(test_data))
+        print("📤 Sent test audio")
         
         # Wait for response
         try:
-            response = await asyncio.wait_for(websocket.recv(), timeout=5.0)
-            print(f"Received response: {response}")
-            return True
+            response = await asyncio.wait_for(ws.recv(), timeout=5.0)
+            print(f"📥 Received response: {response[:100]}...")
         except asyncio.TimeoutError:
-            print("No response received within timeout")
-            return False
+            print("⏰ Timeout waiting for response")
+        
+        print("✅ Test complete")
 
 if __name__ == "__main__":
-    asyncio.run(test_browser_stream())
+    asyncio.run(test_audio_stream())
